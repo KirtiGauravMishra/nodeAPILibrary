@@ -4,6 +4,7 @@ const RefreshToken = require('../models/refreshTokenModel');
 const ApiErrorHandler = require('../utils/ApiErrorHandler');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const {sendPasswordResetEmail }= require("./mailer")
 
 const generateAccessToken = (user) => {
   // Replace 'YOUR_SECRET_KEY' with your own secret key for signing the token
@@ -127,10 +128,68 @@ const logout = async (req, res, next) => {
     return next(error);
   }
 };
+const requestPasswordReset = async (req, res, next) => {
+  const { email } = req.body;
+
+  try {
+    // Check if a user with the provided email exists
+    const user = await User.findOne({ email });
+    if (!user) {
+      return next(new ApiErrorHandler('User not found', 404));
+    }
+
+    // Generate a password reset token and save it to the user document
+    const resetToken = jwt.sign({ userId: user._id }, 'kjkjkjkjkjkjkj', { expiresIn: '1h' });
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpires = Date.now() + 3600000; // Set expiration to 1 hour from now
+    await user.save();
+
+    // Send the password reset email to the user
+    await sendPasswordResetEmail(email, resetToken);
+
+    res.status(200).json({ message: 'Password reset email sent successfully' });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const resetPassword = async (req, res, next) => {
+  const { resetToken, newPassword } = req.body;
+
+  if (!resetToken || !newPassword) {
+    return next(new ApiErrorHandler('Reset token and new password are required', 400));
+  }
+
+  try {
+    // Find the user with the reset token and check if the token is still valid
+    const user = await User.findOne({
+      resetPasswordToken: resetToken,
+      resetPasswordExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return next(new ApiErrorHandler('Invalid or expired reset token', 400));
+    }
+
+    // Update the user's password and clear the reset token fields
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    // TODO: You can also send an email to the user notifying them that the password has been reset.
+
+    res.status(200).json({ message: 'Password reset successfully' });
+  } catch (error) {
+    return next(error);
+  }
+};
 
 module.exports = {
   signUp,
   login,
   refreshAccessToken,
   logout,
+  requestPasswordReset,
+  resetPassword,
 };
